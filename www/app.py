@@ -1,6 +1,7 @@
-import logging
+# 编写web骨架
+# 网站通过http://localhost:9000 访问，主页返回Hello标题
 
-from flask import app;logging.basicConfig(level=logging.INFO)
+import logging;logging.basicConfig(level=logging.INFO)
 from aiohttp import web
 
 async def index(request):
@@ -8,6 +9,7 @@ async def index(request):
 
 def init():
     app = web.Application()
+    # 增加路径到处理函数的路由
     app.add_routes([web.get('/',index)])
     web.run_app(app,host='localhost',port=9000)
 
