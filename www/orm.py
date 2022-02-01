@@ -10,12 +10,14 @@ logging.basicConfig(level=logging.INFO)
 
 # 打印日志的函数
 def log(sql,args=()):
-    if args:
-        logging.info(sql % args)
-        # print(sql % args)
-    else:
-        logging.info(sql)
-        # print(sql)
+    logging.info(sql)
+    # if args:
+    #     _sql = sql % tuple(args)
+    #     logging.info(_sql)
+    #     # print(sql % args)
+    # else:
+    #     logging.info(sql)
+    #     print(sql)
 
 def create_args_string(num):
     return ','.join(['?']*num)
@@ -26,32 +28,36 @@ async def create_pool(loop,**kw):
     # create_pool的用法？
     __pool = await aiomysql.create_pool(
         host = kw.get('host','localhost'),
-        port = kw.get('port','3306'),
+        port = kw.get('port',3306),
         user = kw['user'],
         password = kw['password'],
         db = kw['db'],
         charset = kw.get('cahrset','utf8'),
-        autocommit = True,
-        loop=loop
+        autocommit = kw.get('autocommit',True),
+        maxsize = kw.get('maxsize',10),
+        minsize = kw.get('minsize',1),
+        loop=loop,
     )
 
 #封装SQL的select语句
 async def select(sql,args,size=None):
-    log(sql.replace('?','%'),args)
+    log(sql.replace('?','%s'),args)
     with (await __pool) as conn:
         cur = await conn.cursor(aiomysql.DictCursor)
         await cur.execute(sql.replace('?','%s'),args)
         if size:
-            res = cur.fetchmany(size)
+            res = await cur.fetchmany(size)
         else:
-            res = cur.fetchall()
+            res = await cur.fetchall()
         await cur.close()
-        log(f'SELECT操作返回了{len(res)}行数据')
+        log(f'SELECT操作成功！返回了{len(res)}行数据')
+        # log(f'res的类型是{type(res)}-------')
+        # log(f'{type(**res[0])}')
         return res
 
 # 封装insert、update和delete语句
 async def execute(sql,args):
-    log(sql.replace('?','%'),args)
+    log(sql.replace('?','%s'),args)
     with (await __pool) as conn:
         # 修改操作可能会报错
         try:
@@ -59,7 +65,7 @@ async def execute(sql,args):
             await cur.execute(sql.replace('?','%s'),args)
             affected = cur.rowcount
             await cur.close()
-            log(f'修改操作影响了{affected}行数据')
+            # log(f'修改操作影响了{affected}行数据')
         except BaseException:
             log('修改数据库失败')
             raise
@@ -73,28 +79,35 @@ class Field(object):
         self.primary_key = primary_key
         self.default = default
     def __str__(self):
-        return f'<{self.__class__.__name__}:{self.name},{self.column_type}>'
+        return f'<{self.__class__.__name__}:{self.column_type}>'
 
 class StringField(Field):
-    def __init__(self, name, column_type='VARCHAR(100)', primary_key=False, default=None):
+    def __init__(self, name=None, column_type='VARCHAR(100)', primary_key=False, default=None):
         super().__init__(name, column_type, primary_key, default)
 
 class IntegerField(Field):
-    def __init__(self, name, column_type='BIGINT', primary_key=False, default=None):
+    def __init__(self, name=None, column_type='BIGINT', primary_key=False, default=None):
         super().__init__(name, column_type, primary_key, default)
 
 class FloatField(Field):
-    def __init__(self, name, column_type = 'DOUBLE', primary_key = False, default = None):
+    def __init__(self, name=None, column_type = 'DOUBLE', primary_key = False, default = None):
         super().__init__(name, column_type, primary_key, default)
 
 class BooleanField(Field):
-    def __init__(self, name, column_type = 'BOOLEAN', primary_key = False, default = None):
+    def __init__(self, name=None, column_type = 'BOOLEAN', primary_key = False, default = None):
         super().__init__(name, column_type, primary_key, default)
     
 class DateTimeField(Field):
-    def __init__(self, name, column_type = 'DATETIME', primary_key = False, default = None):
+    def __init__(self, name=None, column_type = 'DATETIME', primary_key = False, default = None):
         super().__init__(name, column_type, primary_key, default)
 
+# class TextField(Field):
+#     def __init__(self, name=None, column_type='text', primary_key=False, default=None):
+#         super().__init__(name, column_type, primary_key, default)
+
+class TextField(Field):
+    def __init__(self, name=None, column_type='TEXT', primary_key=False, default=None):
+        super().__init__(name, column_type, primary_key, default)
 
 # 定义Model元类
 
@@ -115,7 +128,7 @@ class ModelMetaClass(type):
         primaryKey = None # 主键字段
         for k,v in attrs.items():
             if isinstance(v,Field):
-                log(f'发现映射: 属性{k} ==> 字段{v}')
+                log(f'发现映射: 属性{k} ==> 字段{k}{v}')
                 mappings[k] = v
                 if v.primary_key:
                     if primaryKey:
@@ -133,9 +146,9 @@ class ModelMetaClass(type):
         attrs['__primaryKey__'] = primaryKey
         attrs['__fields__'] = fields
         # 构造默认的SQL语句,先放一下。。。
-        attrs['__select__'] = 'select %s, %s, from %s' % (primaryKey,','.join(fields),tableName)
-        attrs['__insert__'] = 'insert into %s, (%s, %s) values (%s)' % (tableName, ','.join(fields),primaryKey,create_args_string(len(fields)+1))
-        attrs['__update__'] = 'update %s set %s where %s = ?' % (tableName,','.join(map(lambda f:f'{mappings[f].name}=?' ,fields)),primaryKey)
+        attrs['__select__'] = 'select %s, %s from %s' % (primaryKey,','.join(fields),tableName)
+        attrs['__insert__'] = 'insert into %s  (%s, %s) values (%s)' % (tableName, ','.join(fields),primaryKey,create_args_string(len(fields)+1))
+        attrs['__update__'] = 'update %s set %s where %s = ?' % (tableName,','.join(map(lambda f:f'{f}=?' or f ,fields)),primaryKey)
         attrs['__delete__'] = 'delete from %s where %s = ?' % (tableName,primaryKey)
         return super().__new__(cls,name,bases,attrs)
 
@@ -160,10 +173,10 @@ class Model(dict,metaclass=ModelMetaClass):
     # 获取属性的值，有表的字段默认值，就填充，没有就返回None
     # 用于处理实例初始化缺少字段的情况
     def getValueOrDefault(self,key):
-        value = self.getValue(self,key)
+        value = self.getValue(key)
         if not value:
             field = self.__mappings__[key]
-            if not field.default:
+            if field.default != None:
                 value = field.default() if callable(field.default) else field.default
                 log(f'为{key}填充了默认值{value}')
                 setattr(self,key,value)
@@ -177,6 +190,8 @@ class Model(dict,metaclass=ModelMetaClass):
         res = await select(sql,pk,1)
         if len(res) == 0:
             return None
+        # print(res)
+        # res = cur.findall()等函数的返回值是一个list，里面存的是dict形式的记录
         return cls(**res[0])
         # 实现了user = await User.find('123')这样根据id查找用户信息的功能
 
@@ -211,21 +226,22 @@ class Model(dict,metaclass=ModelMetaClass):
                 sql.append('?,?')
             else:
                 raise ValueError(f'错误的limit值: {limit}')
-        res = await select(' '.join(sql),args)
+        _sql = ' '.join(sql)
+        log(_sql)
+        res = await select(_sql,args)
         return [cls(**r) for r in res] # 这一行没看明白为啥行
     
 
 
     @classmethod
-    async def findNumber(cls,selectField,alias=None,where=None,args=None):
-        if alias:
-            sql = [f'select {selectField} {alias} from {cls.__table__}']
-        else:
-            sql = [f'select {selectField} from {cls.__table__}']
+    async def findNumber(cls,selectField,alias='_num_',where=None,args=None):
+        sql = [f'select {selectField} {alias} from {cls.__table__}']
         if where:
             sql.append('where')
             sql.append(where)
-        res = await select(sql,args,1)
+        _sql = ' '.join(sql)
+        log(_sql)
+        res = await select(_sql,args,1)
         if len(res) == 0:
             return None
         else:
@@ -243,11 +259,12 @@ class Model(dict,metaclass=ModelMetaClass):
         if rows != 1:
             logging.warn(f'插入数据失败；影响数据库行数: {rows}')
         else:
-            log('插入数据库成功！')
+            log(f'插入数据成功！影响数据库行数: {rows}')
 
     async def update(self):
         args = list(map(self.getValue,self.__fields__))
         args.append(self.getValue(self.__primaryKey__))
+        print("args = ",args,'-------')
         # primaryKey = self.__primaryKey__
         sql = self.__update__
         rows = await execute(sql,args)
