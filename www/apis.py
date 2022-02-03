@@ -41,7 +41,3 @@ class APIPermissionError(APIError):
     def __init__(self,message=''):
         super().__init__('permission:forbidden','permission',message)
 
-if __name__ == '__main__':
-    import doctest
-    doctest.testmod()
-

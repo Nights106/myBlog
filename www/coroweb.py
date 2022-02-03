@@ -1,10 +1,9 @@
 import asyncio,os,inspect,logging
 import functools
-from types import coroutine
+
 from urllib import parse
 from aiohttp import web
-from itsdangerous import exc
-from apis import APIEroor
+from apis import APIError
 
 
 
@@ -80,7 +79,7 @@ def has_request_arg(fn):
     sig = inspect.signature(fn)
     params = sig.parameters
     found = False
-    for name,param in params:
+    for name,param in params.items():
         if(name == 'request'):
             found = True
             continue
@@ -120,12 +119,12 @@ class RequestHandler(object):
                 if not request.content_type:
                     return web.HTTPBadRequest(text='POST请求遗漏了content_type字段')
                 ct = request.content_type.lower()
-                if ct.startwith('application/json'):
+                if ct.startswith('application/json'):
                     params = await request.json()
                     if not isinstance(params,dict):
                         return web.HTTPBadRequest(text='JSON格式错误')
                     kw = params
-                elif ct.startwith('application/x-www-form-urlencoded') or ct.startwith('multipart/form-data'):
+                elif ct.startswith('application/x-www-form-urlencoded') or ct.startwith('multipart/form-data'):
                     params = await request.post()
                     kw = dict(**params) # 这里为什么不检查一下form的格式呢？
                 else:
@@ -163,12 +162,14 @@ class RequestHandler(object):
             for k in self._required_kw_args:
                 if not k in kw:
                     return web.HTTPBadRequest(text=f'缺少参数：{k}')
+        
+        
         logging.info(f'调用参数：{str(kw)}')
-
         try:
             r = await self._func(**kw)
+            logging.info(f'返回处理结果：{r}')
             return r
-        except APIEroor as e:
+        except APIError as e:
             return dict(error=e.error,data=e.data,message=e.message)
 
 # 接下来几个函数没看太懂在干啥。。。
@@ -182,9 +183,12 @@ def add_static(app):
 # 自定义的add_route函数，用来注册一个URL处理函数
 def add_route(app,fn):
     method = getattr(fn,'__method__',None)
-    path = getattr(fn,'__path__',None)
+    path = getattr(fn,'__route__',None)
+
     if not path or not method:
-        raise ValueError(f'函数{str(fn)}需要被@get或者@post装饰') 
+        # s = '函数%s需要被@get或者@post装饰' % fn.__name__
+        # raise ValueError(s) 
+        raise ValueError('@get or @post not defined in %s.' % str(fn))
     if not asyncio.iscoroutinefunction(fn) and not inspect.isgeneratorfunction(fn):
         fn = asyncio.coroutine(fn)
     logging.info(f"添加路由{method} {path} => {fn.__name__}({','.join(inspect.signature(fn).parameters.keys())})")
@@ -192,22 +196,27 @@ def add_route(app,fn):
 
 # 使用add_route函数自动注册
 def add_routes(app,module_name):
+    logging.info(f'根据模块{module_name}构建路由表...')
     n = module_name.rfind('.')
     if n == -1:
         mod = __import__(module_name,globals(),locals())
     else:
         name = module_name[n+1:]
         mod = getattr(__import__(module_name,globals(),locals(),[name]),name)
-    mod = __import__('module_name',globals(),locals())
+    # logging.info(f'模块的所有属性：{dir(mod)}')
     for attr in dir(mod): # 查看mod模块里的所有属性
-        if attr.startwith('_'): # 排除私有属性
+        if attr.startswith('_'): # 排除私有属性
             continue
         fn = getattr(mod,attr) # 非私有属性属性
         if callable(fn): # 是函数
-            method = getattr(fn,'__methond__',None)
-            path = getattr(fn,'__path__',None)
+            # if fn.__name__ == 'index':
+            #     logging.info(f'index函数的属性：{dir(fn)}')
+            method = getattr(fn,'__method__',None)
+            path = getattr(fn,'__route__',None)
+            # logging.info(f'{fn} ==> {method} {path}')
             if method and path: # 是函数且被装饰过
-                add_route(app,path) # 添加到路由表
+                # logging.info(f'添加路由：{method} {path} ==> {fn}')
+                add_route(app,fn) # 添加到路由表
 
 
 

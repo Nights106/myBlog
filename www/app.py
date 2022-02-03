@@ -3,9 +3,12 @@
 
 from calendar import month
 import logging
+from textwrap import indent
 from tkinter.messagebox import RETRYCANCEL
 from unittest import runner
-from warnings import filters;logging.basicConfig(level=logging.INFO)
+from warnings import filters
+
+from handlers import index;logging.basicConfig(level=logging.INFO)
 from aiohttp import request, web
 import asyncio,os,json,time
 from datetime import datetime 
@@ -15,9 +18,29 @@ import orm
 from config import configs
 from coroweb import add_routes,add_static
 
-async def index(request):
-    return web.Response(body=b'<h1>Hello</h1>',content_type='text/html')
+# async def index(request):
+#     return web.Response(body=b'<h1>Hello</h1>',content_type='text/html')
 
+# def init_jinja2(app, **kw):
+#     logging.info('init jinja2...')
+    # options = dict(
+    #     autoescape = kw.get('autoescape', True),
+    #     block_start_string = kw.get('block_start_string', '{%'),
+    #     block_end_string = kw.get('block_end_string', '%}'),
+    #     variable_start_string = kw.get('variable_start_string', '{{'),
+    #     variable_end_string = kw.get('variable_end_string', '}}'),
+    #     auto_reload = kw.get('auto_reload', True)
+    # )
+    # path = kw.get('path', None)
+    # if path is None:
+    #     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
+    # logging.info('set jinja2 template path: %s' % path)
+    # env = Environment(loader=FileSystemLoader(path), **options)
+    # filters = kw.get('filters', None)
+    # if filters is not None:
+    #     for name, f in filters.items():
+    #         env.filters[name] = f
+    # app['__templating__'] = env
 def init_jinja2(app,**kw):
     logging.info('初始化jinja2...')
     options = dict(
@@ -29,13 +52,13 @@ def init_jinja2(app,**kw):
         auto_reload = kw.get('auto_reload',True)
     )
     path = kw.get('path',None)
-    if not path:
-        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),'tamplates')
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),'templates')
     logging.info(f'设置jinja2模版路径：{path}')
     env = Environment(loader=FileSystemLoader(path),**options)
     # 在调用处传入了一个字典
     filters = kw.get('filters',None) # 过滤器是个什么概念呢？
-    if filters:
+    if filters is not None:
         for name,f in filters.items():
             env.filters[name] = f
     app['__templating__'] = env # jinja2的配置都在env中，将其设置为app的一个属性，方便调用
@@ -88,6 +111,7 @@ async def response_factory(app,handler):
     async def response(request):
         logging.info('Responde handler...')
         r = await handler(request)
+        logging.info(f'响应的内容是：{r}')
         # 在网络中传输的响应得是bytes的形式
         if isinstance(r,web.StreamResponse):
             return r
@@ -111,16 +135,18 @@ async def response_factory(app,handler):
             # 有模版，就加载模版
             else:
                 # r['__user__'] = request.__user__
-                tp = app['__templating__'].get_template(template).render(**r) #render后是个啥？
-                resp = web.Response(tp.encode('utf-8'))
-                resp.content_type = 'text/htmlc;charset=utf-8'
+                resp = web.Response(body=app['__templating__'].get_template(template).render(**r).encode('utf-8'))
+                # tp = app['__templating__'].get_template(template).render(**r) #render后是个啥？
+                # resp = web.Response(body=tp.encode('utf-8'))
+
+                resp.content_type = 'text/html;charset=utf-8'
                 return resp
         if isinstance(r,int) and (r>=100 and r<600):
             return web.Response(r)
         if isinstance(r,tuple) and len(r) == 2:
             t,m = r
             if isinstance(t,int) and t>=100 and t<600:
-                return web.Response(t,str(m))
+                return web.Response(status=t,reason=str(m))
         # 默认情况不处理直接当成明文返回
         resp = web.Response(body=str(r).encode('utf-8'))
         resp.content_type = 'text/plain;charset=utf-8'
@@ -132,8 +158,10 @@ async def response_factory(app,handler):
 async def init(loop):
     await orm.create_pool(loop=loop,**configs.db)
     app = web.Application(middlewares=[logger_factory,response_factory])
+    # app = web.Application()
     init_jinja2(app,filters=dict(datetime=datetime_filter))
     add_routes(app,'handlers')
+    # app.add_routes(web.get('/',index))
     add_static(app)
     # 引入runner是否是因为要使用协程？
     runner = web.AppRunner(app)
